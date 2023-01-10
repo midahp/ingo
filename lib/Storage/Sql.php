@@ -403,22 +403,11 @@ class Ingo_Storage_Sql extends Ingo_Storage
             switch ($class = get_class($rule)) {
             case 'Ingo_Rule_System_Blacklist':
             case 'Ingo_Rule_System_Whitelist':
-                $query = sprintf(
-                    'DELETE FROM %s WHERE list_owner = ? AND ' .
-                    'list_blacklist = ?',
-                    $this->_params['table_lists']
-                );
+
                 $values = array(
                     Ingo::getUser(),
                     intval($class === 'Ingo_Rule_System_Blacklist')
                 );
-
-                try {
-                    $this->_params['db']->delete($query, $values);
-                } catch (Horde_Db_Exception $e) {
-                    Horde::log($e, 'ERR');
-                    throw new Ingo_Exception($e);
-                }
 
                 $query = sprintf(
                     'INSERT INTO %s (list_owner, list_blacklist, ' .
@@ -426,12 +415,37 @@ class Ingo_Storage_Sql extends Ingo_Storage
                         $this->_params['table_lists']
                 );
 
+                $existingAddresses = $this->_params['db']->selectValues(
+                    sprintf(
+                        'SELECT list_address FROM %s WHERE list_owner = ? AND ' .
+                        'list_blacklist = ?',
+                        $this->_params['table_lists']
+                    ), $values
+                );
+
                 $this->_params['db']->beginDbTransaction();
                 try {
                     foreach ($rule->addresses as $address) {
+                        $idx = array_search($address, $existingAddresses);
+                        if ($idx !== false){
+                            // address already exists in list. remove it from existingAddresses and continue
+                            array_splice($existingAddresses, $idx, 1);
+                            continue;
+                        }
                         $this->_params['db']->insert(
                             $query,
                             array_merge($values, array($address))
+                        );
+                    }
+                    // whatever is left in existingAddresses needs to be deleted
+                    foreach($existingAddresses as $address){
+                        $this->_params['db']->delete(
+                            sprintf(
+                                'DELETE FROM %s WHERE list_owner = ? AND ' .
+                                'list_blacklist = ? AND list_address = ?',
+                                $this->_params['table_lists']
+                            ),
+                            array_merge($values, [$address])
                         );
                     }
                 } catch (Horde_Db_Exception $e) {
